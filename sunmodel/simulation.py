@@ -8,14 +8,15 @@ code. Dropping it changes no computed output.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, Optional, Tuple, Union
+from typing import Iterator, List, Optional, Tuple, Union
 
 from .empirical import expo
 from .rgo_data import SunspotRecord, iter_records
 from .report import SunReport
-from .seir import SeirModel
+from .seir import Polygon, SeirModel
 
 # Hardcoded in the original (these were interactive prompts too, until
 # someone commented them out in favor of fixed values).
@@ -23,6 +24,15 @@ DURATION_K = 1
 ALPHA = 0.95
 NEIGHBOR_Z = 8.0
 INITIAL_BATCH_DAYS = 85
+
+DYNAMICS_MODES = ("legacy", "robust")
+
+# Arbitrary, tunable -- there's no physical derivation for this any more
+# than there was for the 1/IREC decay it replaces (see empirical.py's
+# module docstring re: EXPO/ENERGY/MASS having no documented derivation
+# either). Chosen to decay noticeably but not vanish across the ~30-day
+# span typical of one rgo_data.prn run; override via the constructor.
+DEFAULT_REMQ_HALF_LIFE_DAYS = 14.0
 
 
 @dataclass
@@ -45,7 +55,13 @@ class SunSimulation:
 
     def __init__(self, config: RunConfig, rgo_data_path: Union[Path, str],
                  polypara_path: Union[Path, str], report: SunReport,
-                 seed: Optional[int] = None):
+                 seed: Optional[int] = None, dynamics: str = "legacy",
+                 remq_half_life_days: float = DEFAULT_REMQ_HALF_LIFE_DAYS):
+        if dynamics not in DYNAMICS_MODES:
+            raise ValueError(f"dynamics must be one of {DYNAMICS_MODES}, got {dynamics!r}")
+        self.dynamics = dynamics
+        self.remq_half_life_days = remq_half_life_days
+
         self.cfg = config
         self.beta = float(config.n_umbra_seen)
         self.rr = (config.n_sunspots_seen + 1) / 100.0
@@ -58,6 +74,20 @@ class SunSimulation:
         self.report = report
         self.seir = SeirModel(polypara_path, seed=seed)
         self._records: Iterator[SunspotRecord] = iter_records(rgo_data_path)
+
+        # In robust mode the SEIR polygon state is carried forward record
+        # to record (see _robust_posq) instead of being re-read from
+        # polypara.dat on every call, so it needs an explicit initial step.
+        self._polygons: Optional[List[Polygon]] = None
+        if self.dynamics == "robust":
+            _, self._polygons = self.seir.step(0)
+
+        # Day of the first record seen by *this run* (not necessarily day 1
+        # of rgo_data.prn -- a run can be handed a mid-dataset slice). The
+        # robust remq decay is measured from here, so its trajectory only
+        # depends on elapsed calendar time within this run, never on how
+        # many records happened to precede it.
+        self._run_start_day: Optional[int] = None
 
         self.n = INITIAL_BATCH_DAYS  # 'N' in the original; mutates as batches progress
         self.irec = 1                # running record counter, never resets across batches
@@ -100,6 +130,8 @@ class SunSimulation:
     def _process_record(self, record: SunspotRecord) -> None:
         if record.day > self.last_day:
             self.last_day = record.day
+        if self._run_start_day is None:
+            self._run_start_day = record.day
 
         umbra_area = float(record.umbra_area)
         rinf = self.rr * umbra_area
@@ -110,20 +142,16 @@ class SunSimulation:
 
         time = (self.irec / self.n) + 0.01
 
-        if self.irec <= DURATION_K:
-            inf, _ = self.seir.step(self.irec - 1)
-            f_sum = sum(inf[1:int(NEIGHBOR_Z) + 1])
-            posq = f_sum / NEIGHBOR_Z
-            # NOTE: the original calls EXPO here and discards the result --
-            # the line that would apply it to POSQ ("POSQ=F*POSQ") is
-            # commented out in sun.f. Called here purely for fidelity;
-            # since expo() is a pure function this has no effect on output.
-            expo(self.n, time, pg, rinf, freq, c)
+        if self.dynamics == "robust":
+            posq = self._robust_posq(time, pg, rinf, freq, c)
         else:
-            posq = 1.0 / self.irec
+            posq = self._legacy_posq(time, pg, rinf, freq, c)
 
         if (self.irec + 1) % 2 == 1:  # i.e. irec is even
-            self.remq = -(1.0 / self.irec) * (self.g * (1 - ALPHA)) * self.delta
+            if self.dynamics == "robust":
+                self.remq = self._robust_remq(record.day)
+            else:
+                self.remq = -(1.0 / self.irec) * (self.g * (1 - ALPHA)) * self.delta
 
         susqs = ((1 - self.Pr) * self.rr * (self.n * umbra_area + self.n * self.remq)) / (
             NEIGHBOR_Z + self.Pr * self.rr * (self.x * umbra_area + self.x * self.remq)
@@ -138,3 +166,42 @@ class SunSimulation:
                                record.umbra_area, record.whole_spot_area)
         self.avepores += susqs
         self.irec += 1
+
+    def _legacy_posq(self, time: float, pg: float, rinf: float,
+                      freq: float, c: float) -> float:
+        """Original behavior: SEIR/EXPO only ever run on the very first
+        record (DURATION_K=1), and EXPO's result is computed then
+        discarded -- reproduced here purely for numerical fidelity with
+        sun.f. See the module-level [An important caveat...] note in
+        analysis_report.qmd."""
+        if self.irec <= DURATION_K:
+            inf, _ = self.seir.step(self.irec - 1)
+            f_sum = sum(inf[1:int(NEIGHBOR_Z) + 1])
+            posq = f_sum / NEIGHBOR_Z
+            expo(self.n, time, pg, rinf, freq, c)
+        else:
+            posq = 1.0 / self.irec
+        return posq
+
+    def _robust_posq(self, time: float, pg: float, rinf: float,
+                      freq: float, c: float) -> float:
+        """Recommendation #1: SEIR state evolves every record (instead of
+        being re-read from polypara.dat and discarded after record 1),
+        and EXPO's result actually scales POSQ (the original's commented-
+        out 'POSQ=F*POSQ')."""
+        inf, self._polygons = self.seir.step(self.irec, polygons=self._polygons)
+        f_sum = sum(inf[1:int(NEIGHBOR_Z) + 1])
+        posq = f_sum / NEIGHBOR_Z
+        f = expo(self.n, time, pg, rinf, freq, c)
+        return f * posq
+
+    def _robust_remq(self, day: int) -> float:
+        """Recommendation #4: replace the 1/IREC decay (tied to how many
+        records this process happened to have handled) with a decay tied
+        to elapsed calendar days since this run's first record. A run
+        started mid-dataset (or resumed) reproduces the same trajectory a
+        continuous run would have from that point on, instead of one
+        distorted by an arbitrary record count."""
+        elapsed_days = max(day - self._run_start_day, 0)
+        decay = math.exp(-elapsed_days / self.remq_half_life_days)
+        return -decay * (self.g * (1 - ALPHA)) * self.delta

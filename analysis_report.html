@@ -2601,14 +2601,15 @@ Byte-for-byte match: True</code></pre>
 <li>The model’s headline behavior — a decaying “Umbra” estimate and a noisy “Pores” estimate that tracks raw observed spot area — is driven almost entirely by simple arithmetic on the input data (<code>1/IREC</code> decay, direct scaling by <code>ICUA</code>/<code>ICWSA</code>), <strong>not</strong> by the more sophisticated empirical curve-fit or SEIR submodels those variable names suggest. See the callout in [Background] above.</li>
 <li>The SEIR submodel (<code>ZCELLS</code>/<code>SPUR</code>) is fully ported and unit-tested, and produces sensible, bounded, finite output — but it currently only contributes to the very first record of a run, and even that contribution is a smaller <code>POSQ</code> term rather than a persistent evolving state (since <code>ZCELLS</code> is always called with <code>timestep=0</code>, it re-reads <code>polypara.dat</code> fresh each time rather than carrying state forward).</li>
 </ul>
+<p><strong>Update:</strong> the two behavioral recommendations below (SEIR/<code>EXPO</code> actually driving output, and a decay that doesn’t depend on raw record count) are now implemented as an opt-in <strong><code>robust</code></strong> dynamics mode, alongside the original <strong><code>legacy</code></strong> mode described above. Nothing above this note changes for <code>legacy</code> mode — it remains byte-for-byte identical to <code>sun.f</code>’s output (see <a href="#validation">Validation</a>) and stays the default in <code>sunmodel.cli</code> and <code>SunSimulation</code>, so existing workflows and the <code>SUN.CSV</code> comparison are unaffected unless <code>--dynamics robust</code> (or <code>dynamics=&quot;robust&quot;</code>) is requested explicitly.</p>
 </section>
 <section id="recommendations-future-work" class="level2" data-number="8">
 <h2 data-number="8" class="anchored" data-anchor-id="recommendations-future-work"><span class="header-section-number">8</span> Recommendations / future work</h2>
 <ul>
-<li><strong>Decide whether the SEIR/<code>EXPO</code> machinery should actually drive output.</strong> If so, the fix is small: apply <code>EXPO</code>’s result to <code>POSQ</code> (uncomment/port the equivalent of <code>POSQ=F*POSQ</code>), and let <code>ZCELLS</code> evolve <code>timestep</code> across calls instead of always reinitializing from <code>polypara.dat</code>. If not, that code could be removed entirely to simplify the model further.</li>
-<li><strong>Run against the full historical RGO dataset</strong>, not just the 82-record sample bundled here, to see the model’s longer-run behavior.</li>
-<li><strong>Add a proper scientific validation</strong> — compare model output against published sunspot umbra/penumbra ratios from the Bogdan et al. (2004) paper the original cites, beyond just confirming the port matches the original code’s arithmetic.</li>
-<li><strong>Consider replacing <code>1/IREC</code> decay</strong> with something that doesn’t depend on absolute record position, if batches will ever start mid-dataset.</li>
+<li><del><strong>Decide whether the SEIR/<code>EXPO</code> machinery should actually drive output.</strong></del> <strong>Done, opt-in.</strong> <code>robust</code> mode carries <code>ZCELLS</code>’ polygon state forward across every record instead of reinitializing it, and applies <code>EXPO</code>’s result to <code>POSQ</code> (the original’s commented-out <code>POSQ=F*POSQ</code>) on every record rather than discarding it. See <code>SunSimulation._robust_posq</code> in <code>sunmodel/simulation.py</code> and <code>tests/test_simulation_robust.py</code>.</li>
+<li><del><strong>Consider replacing <code>1/IREC</code> decay</strong></del> <strong>Done, opt-in.</strong> <code>robust</code> mode’s <code>remq</code> term now decays with elapsed <em>calendar</em> days since the run’s first record (<code>SunSimulation._robust_remq</code>), rather than with how many records the process happened to have handled. This matters in practice: <code>rgo_data.prn</code>’s own <code>Day</code> column jumps from day 2 to day 26 partway through the bundled sample, a 24-day gap the old <code>1/IREC</code> count couldn’t see. A run started mid-dataset (or resumed) now reproduces the trajectory a continuous run would have from that point on. The half-life of that decay (default 14 days) has no physical derivation — same caveat as <code>EXPO</code>’s curve — and is a constructor parameter (<code>remq_half_life_days</code>) for anyone who wants to tune it.</li>
+<li><strong>Run against the full historical RGO dataset</strong>, not just the 82-record sample bundled here, to see the model’s longer-run behavior. <em>(Still open — needs a larger RGO extract than what’s checked into this repo.)</em></li>
+<li><strong>Add a proper scientific validation</strong> — compare model output against published sunspot umbra/penumbra ratios from the Bogdan et al. (2004) paper the original cites, beyond just confirming the port matches the original code’s arithmetic. <em>(Still open — needs that paper’s reference figures.)</em></li>
 </ul>
 </section>
 <section id="appendix" class="level2" data-number="9">
@@ -3288,28 +3289,51 @@ Byte-for-byte match: True</code></pre>
 <span id="cb8-220"><a href="#cb8-220" aria-hidden="true" tabindex="-1"></a>  <span class="in">`ZCELLS`</span> is always called with <span class="in">`timestep=0`</span>, it re-reads <span class="in">`polypara.dat`</span></span>
 <span id="cb8-221"><a href="#cb8-221" aria-hidden="true" tabindex="-1"></a>  fresh each time rather than carrying state forward).</span>
 <span id="cb8-222"><a href="#cb8-222" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb8-223"><a href="#cb8-223" aria-hidden="true" tabindex="-1"></a><span class="fu">## Recommendations / future work</span></span>
-<span id="cb8-224"><a href="#cb8-224" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb8-225"><a href="#cb8-225" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**Decide whether the SEIR/`EXPO` machinery should actually drive output.**</span>
-<span id="cb8-226"><a href="#cb8-226" aria-hidden="true" tabindex="-1"></a>  If so, the fix is small: apply <span class="in">`EXPO`</span>&#39;s result to <span class="in">`POSQ`</span> (uncomment/port</span>
-<span id="cb8-227"><a href="#cb8-227" aria-hidden="true" tabindex="-1"></a>  the equivalent of <span class="in">`POSQ=F*POSQ`</span>), and let <span class="in">`ZCELLS`</span> evolve <span class="in">`timestep`</span> across</span>
-<span id="cb8-228"><a href="#cb8-228" aria-hidden="true" tabindex="-1"></a>  calls instead of always reinitializing from <span class="in">`polypara.dat`</span>. If not, that</span>
-<span id="cb8-229"><a href="#cb8-229" aria-hidden="true" tabindex="-1"></a>  code could be removed entirely to simplify the model further.</span>
-<span id="cb8-230"><a href="#cb8-230" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**Run against the full historical RGO dataset**, not just the 82-record</span>
-<span id="cb8-231"><a href="#cb8-231" aria-hidden="true" tabindex="-1"></a>  sample bundled here, to see the model&#39;s longer-run behavior.</span>
-<span id="cb8-232"><a href="#cb8-232" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**Add a proper scientific validation** — compare model output against</span>
-<span id="cb8-233"><a href="#cb8-233" aria-hidden="true" tabindex="-1"></a>  published sunspot umbra/penumbra ratios from the Bogdan et al. (2004)</span>
-<span id="cb8-234"><a href="#cb8-234" aria-hidden="true" tabindex="-1"></a>  paper the original cites, beyond just confirming the port matches the</span>
-<span id="cb8-235"><a href="#cb8-235" aria-hidden="true" tabindex="-1"></a>  original code&#39;s arithmetic.</span>
-<span id="cb8-236"><a href="#cb8-236" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**Consider replacing `1/IREC` decay** with something that doesn&#39;t depend on</span>
-<span id="cb8-237"><a href="#cb8-237" aria-hidden="true" tabindex="-1"></a>  absolute record position, if batches will ever start mid-dataset.</span>
-<span id="cb8-238"><a href="#cb8-238" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb8-239"><a href="#cb8-239" aria-hidden="true" tabindex="-1"></a><span class="fu">## Appendix</span></span>
-<span id="cb8-240"><a href="#cb8-240" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb8-241"><a href="#cb8-241" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Source: <span class="co">[</span><span class="ot">`sun.f`</span><span class="co">](sun.f)</span> <span class="dv">&amp;middot;</span> line-by-line walkthrough: <span class="in">`SUN_F_ANALYSIS.pdf`</span></span>
-<span id="cb8-242"><a href="#cb8-242" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Python port: <span class="co">[</span><span class="ot">`sunmodel/`</span><span class="co">](sunmodel/)</span> <span class="dv">&amp;middot;</span> tests: <span class="co">[</span><span class="ot">`tests/`</span><span class="co">](tests/)</span></span>
-<span id="cb8-243"><a href="#cb8-243" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Interactive notebook: <span class="co">[</span><span class="ot">`Sun_Model.ipynb`</span><span class="co">](Sun_Model.ipynb)</span></span>
-<span id="cb8-244"><a href="#cb8-244" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Repository: <span class="ot">&lt;https://github.com/davidjayjackson/rodney_fortran_sun&gt;</span></span>
+<span id="cb8-223"><a href="#cb8-223" aria-hidden="true" tabindex="-1"></a>**Update:** the two behavioral recommendations below (SEIR/<span class="in">`EXPO`</span> actually</span>
+<span id="cb8-224"><a href="#cb8-224" aria-hidden="true" tabindex="-1"></a>driving output, and a decay that doesn&#39;t depend on raw record count) are</span>
+<span id="cb8-225"><a href="#cb8-225" aria-hidden="true" tabindex="-1"></a>now implemented as an opt-in **`robust`** dynamics mode, alongside the</span>
+<span id="cb8-226"><a href="#cb8-226" aria-hidden="true" tabindex="-1"></a>original **`legacy`** mode described above. Nothing above this note</span>
+<span id="cb8-227"><a href="#cb8-227" aria-hidden="true" tabindex="-1"></a>changes for <span class="in">`legacy`</span> mode — it remains byte-for-byte identical to</span>
+<span id="cb8-228"><a href="#cb8-228" aria-hidden="true" tabindex="-1"></a><span class="in">`sun.f`</span>&#39;s output (see <span class="co">[</span><span class="ot">Validation</span><span class="co">]</span>) and stays the default in <span class="in">`sunmodel.cli`</span></span>
+<span id="cb8-229"><a href="#cb8-229" aria-hidden="true" tabindex="-1"></a>and <span class="in">`SunSimulation`</span>, so existing workflows and the <span class="in">`SUN.CSV`</span> comparison</span>
+<span id="cb8-230"><a href="#cb8-230" aria-hidden="true" tabindex="-1"></a>are unaffected unless <span class="in">`--dynamics robust`</span> (or <span class="in">`dynamics=&quot;robust&quot;`</span>) is</span>
+<span id="cb8-231"><a href="#cb8-231" aria-hidden="true" tabindex="-1"></a>requested explicitly.</span>
+<span id="cb8-232"><a href="#cb8-232" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-233"><a href="#cb8-233" aria-hidden="true" tabindex="-1"></a><span class="fu">## Recommendations / future work</span></span>
+<span id="cb8-234"><a href="#cb8-234" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-235"><a href="#cb8-235" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>~~**Decide whether the SEIR/<span class="in">`EXPO`</span> machinery should actually drive</span>
+<span id="cb8-236"><a href="#cb8-236" aria-hidden="true" tabindex="-1"></a>  output.**~~ **Done, opt-in.** <span class="in">`robust`</span> mode carries <span class="in">`ZCELLS`</span>&#39; polygon</span>
+<span id="cb8-237"><a href="#cb8-237" aria-hidden="true" tabindex="-1"></a>  state forward across every record instead of reinitializing it, and</span>
+<span id="cb8-238"><a href="#cb8-238" aria-hidden="true" tabindex="-1"></a>  applies <span class="in">`EXPO`</span>&#39;s result to <span class="in">`POSQ`</span> (the original&#39;s commented-out</span>
+<span id="cb8-239"><a href="#cb8-239" aria-hidden="true" tabindex="-1"></a>  <span class="in">`POSQ=F*POSQ`</span>) on every record rather than discarding it. See</span>
+<span id="cb8-240"><a href="#cb8-240" aria-hidden="true" tabindex="-1"></a>  <span class="in">`SunSimulation._robust_posq`</span> in <span class="in">`sunmodel/simulation.py`</span> and</span>
+<span id="cb8-241"><a href="#cb8-241" aria-hidden="true" tabindex="-1"></a>  <span class="in">`tests/test_simulation_robust.py`</span>.</span>
+<span id="cb8-242"><a href="#cb8-242" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>~~**Consider replacing `1/IREC` decay**~~ **Done, opt-in.** <span class="in">`robust`</span></span>
+<span id="cb8-243"><a href="#cb8-243" aria-hidden="true" tabindex="-1"></a>  mode&#39;s <span class="in">`remq`</span> term now decays with elapsed *calendar* days since the</span>
+<span id="cb8-244"><a href="#cb8-244" aria-hidden="true" tabindex="-1"></a>  run&#39;s first record (<span class="in">`SunSimulation._robust_remq`</span>), rather than with how</span>
+<span id="cb8-245"><a href="#cb8-245" aria-hidden="true" tabindex="-1"></a>  many records the process happened to have handled. This matters in</span>
+<span id="cb8-246"><a href="#cb8-246" aria-hidden="true" tabindex="-1"></a>  practice: <span class="in">`rgo_data.prn`</span>&#39;s own <span class="in">`Day`</span> column jumps from day 2 to day 26</span>
+<span id="cb8-247"><a href="#cb8-247" aria-hidden="true" tabindex="-1"></a>  partway through the bundled sample, a 24-day gap the old <span class="in">`1/IREC`</span> count</span>
+<span id="cb8-248"><a href="#cb8-248" aria-hidden="true" tabindex="-1"></a>  couldn&#39;t see. A run started mid-dataset (or resumed) now reproduces the</span>
+<span id="cb8-249"><a href="#cb8-249" aria-hidden="true" tabindex="-1"></a>  trajectory a continuous run would have from that point on. The</span>
+<span id="cb8-250"><a href="#cb8-250" aria-hidden="true" tabindex="-1"></a>  half-life of that decay (default 14 days) has no physical derivation —</span>
+<span id="cb8-251"><a href="#cb8-251" aria-hidden="true" tabindex="-1"></a>  same caveat as <span class="in">`EXPO`</span>&#39;s curve — and is a constructor parameter</span>
+<span id="cb8-252"><a href="#cb8-252" aria-hidden="true" tabindex="-1"></a>  (<span class="in">`remq_half_life_days`</span>) for anyone who wants to tune it.</span>
+<span id="cb8-253"><a href="#cb8-253" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**Run against the full historical RGO dataset**, not just the 82-record</span>
+<span id="cb8-254"><a href="#cb8-254" aria-hidden="true" tabindex="-1"></a>  sample bundled here, to see the model&#39;s longer-run behavior. *(Still</span>
+<span id="cb8-255"><a href="#cb8-255" aria-hidden="true" tabindex="-1"></a>  open — needs a larger RGO extract than what&#39;s checked into this repo.)*</span>
+<span id="cb8-256"><a href="#cb8-256" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**Add a proper scientific validation** — compare model output against</span>
+<span id="cb8-257"><a href="#cb8-257" aria-hidden="true" tabindex="-1"></a>  published sunspot umbra/penumbra ratios from the Bogdan et al. (2004)</span>
+<span id="cb8-258"><a href="#cb8-258" aria-hidden="true" tabindex="-1"></a>  paper the original cites, beyond just confirming the port matches the</span>
+<span id="cb8-259"><a href="#cb8-259" aria-hidden="true" tabindex="-1"></a>  original code&#39;s arithmetic. *(Still open — needs that paper&#39;s reference</span>
+<span id="cb8-260"><a href="#cb8-260" aria-hidden="true" tabindex="-1"></a>  figures.)*</span>
+<span id="cb8-261"><a href="#cb8-261" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-262"><a href="#cb8-262" aria-hidden="true" tabindex="-1"></a><span class="fu">## Appendix</span></span>
+<span id="cb8-263"><a href="#cb8-263" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-264"><a href="#cb8-264" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Source: <span class="co">[</span><span class="ot">`sun.f`</span><span class="co">](sun.f)</span> <span class="dv">&amp;middot;</span> line-by-line walkthrough: <span class="in">`SUN_F_ANALYSIS.pdf`</span></span>
+<span id="cb8-265"><a href="#cb8-265" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Python port: <span class="co">[</span><span class="ot">`sunmodel/`</span><span class="co">](sunmodel/)</span> <span class="dv">&amp;middot;</span> tests: <span class="co">[</span><span class="ot">`tests/`</span><span class="co">](tests/)</span></span>
+<span id="cb8-266"><a href="#cb8-266" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Interactive notebook: <span class="co">[</span><span class="ot">`Sun_Model.ipynb`</span><span class="co">](Sun_Model.ipynb)</span></span>
+<span id="cb8-267"><a href="#cb8-267" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Repository: <span class="ot">&lt;https://github.com/davidjayjackson/rodney_fortran_sun&gt;</span></span>
 </code></pre></div><button title="Copy to Clipboard" class="code-copy-button" data-in-quarto-modal><i class="bi"></i></button></div>
 </div></div></div></div></div>
 </div> <!-- /content -->

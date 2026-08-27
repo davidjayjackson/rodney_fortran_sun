@@ -31,9 +31,10 @@ def prompt_config() -> RunConfig:
 
 
 def run_interactive(config: RunConfig, rgo_data_path: Path, polypara_path: Path,
-                     output_path: Path, seed: Optional[int]) -> None:
+                     output_path: Path, seed: Optional[int], dynamics: str = "legacy") -> None:
     with SunReport(output_path) as report:
-        sim = SunSimulation(config, rgo_data_path, polypara_path, report, seed=seed)
+        sim = SunSimulation(config, rgo_data_path, polypara_path, report,
+                             seed=seed, dynamics=dynamics)
         while True:
             npores, nspots = sim.pore_summary()
             print(f" Sunspots = {sim.total_sunspots:3d} Pores = {npores:3d}"
@@ -57,10 +58,15 @@ def main(argv: Optional[List[str]] = None) -> None:
                          help="path to write the CSV report")
     parser.add_argument("--seed", type=int, default=None,
                          help="seed the SEIR submodel's random number generator")
+    parser.add_argument("--dynamics", choices=["legacy", "robust"], default="legacy",
+                         help="'legacy' (default) reproduces sun.f's arithmetic exactly, "
+                              "including its SEIR/EXPO-discarding bug; 'robust' lets SEIR "
+                              "state evolve every record, applies EXPO's result to POSQ, "
+                              "and replaces the 1/IREC decay with an elapsed-day decay")
     args = parser.parse_args(argv)
 
     config = prompt_config()
-    run_interactive(config, args.rgo_data, args.polypara, args.output, args.seed)
+    run_interactive(config, args.rgo_data, args.polypara, args.output, args.seed, args.dynamics)
 
 
 if __name__ == "__main__":

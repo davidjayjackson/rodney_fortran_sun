@@ -210,21 +210,44 @@ This same comparison is also encoded as a permanent regression test in
   `ZCELLS` is always called with `timestep=0`, it re-reads `polypara.dat`
   fresh each time rather than carrying state forward).
 
+**Update:** the two behavioral recommendations below (SEIR/`EXPO` actually
+driving output, and a decay that doesn't depend on raw record count) are
+now implemented as an opt-in **`robust`** dynamics mode, alongside the
+original **`legacy`** mode described above. Nothing above this note
+changes for `legacy` mode — it remains byte-for-byte identical to
+`sun.f`'s output (see [Validation]) and stays the default in `sunmodel.cli`
+and `SunSimulation`, so existing workflows and the `SUN.CSV` comparison
+are unaffected unless `--dynamics robust` (or `dynamics="robust"`) is
+requested explicitly.
+
 ## Recommendations / future work
 
-- **Decide whether the SEIR/`EXPO` machinery should actually drive output.**
-  If so, the fix is small: apply `EXPO`'s result to `POSQ` (uncomment/port
-  the equivalent of `POSQ=F*POSQ`), and let `ZCELLS` evolve `timestep` across
-  calls instead of always reinitializing from `polypara.dat`. If not, that
-  code could be removed entirely to simplify the model further.
+- ~~**Decide whether the SEIR/`EXPO` machinery should actually drive
+  output.**~~ **Done, opt-in.** `robust` mode carries `ZCELLS`' polygon
+  state forward across every record instead of reinitializing it, and
+  applies `EXPO`'s result to `POSQ` (the original's commented-out
+  `POSQ=F*POSQ`) on every record rather than discarding it. See
+  `SunSimulation._robust_posq` in `sunmodel/simulation.py` and
+  `tests/test_simulation_robust.py`.
+- ~~**Consider replacing `1/IREC` decay**~~ **Done, opt-in.** `robust`
+  mode's `remq` term now decays with elapsed *calendar* days since the
+  run's first record (`SunSimulation._robust_remq`), rather than with how
+  many records the process happened to have handled. This matters in
+  practice: `rgo_data.prn`'s own `Day` column jumps from day 2 to day 26
+  partway through the bundled sample, a 24-day gap the old `1/IREC` count
+  couldn't see. A run started mid-dataset (or resumed) now reproduces the
+  trajectory a continuous run would have from that point on. The
+  half-life of that decay (default 14 days) has no physical derivation —
+  same caveat as `EXPO`'s curve — and is a constructor parameter
+  (`remq_half_life_days`) for anyone who wants to tune it.
 - **Run against the full historical RGO dataset**, not just the 82-record
-  sample bundled here, to see the model's longer-run behavior.
+  sample bundled here, to see the model's longer-run behavior. *(Still
+  open — needs a larger RGO extract than what's checked into this repo.)*
 - **Add a proper scientific validation** — compare model output against
   published sunspot umbra/penumbra ratios from the Bogdan et al. (2004)
   paper the original cites, beyond just confirming the port matches the
-  original code's arithmetic.
-- **Consider replacing `1/IREC` decay** with something that doesn't depend on
-  absolute record position, if batches will ever start mid-dataset.
+  original code's arithmetic. *(Still open — needs that paper's reference
+  figures.)*
 
 ## Appendix
 
