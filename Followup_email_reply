@@ -1,0 +1,35 @@
+Rodney,
+
+Thanks for the read-through. I took both suggestions and made them real:
+
+1. SEIR/EXPO now actually drives output. Previously the SEIR submodel
+   only ever ran once (on the first record) and its result was
+   discarded (that commented-out POSQ=F*POSQ line in sun.f). Now, in
+   the new mode, SEIR state evolves every record instead of resetting,
+   and EXPO's result actually scales POSQ.
+
+2. Replaced the 1/IREC decay with something tied to elapsed calendar
+   days instead of raw record count. Turns out rgo_data.prn itself has
+   a 24-day gap in it (day 2 jumps straight to day 26) that the old
+   record-count decay was completely blind to. The new decay sees it.
+
+I kept this as an opt-in "robust" dynamics mode rather than replacing
+the old behavior outright -- the original FORTRAN-matching path is
+still the default and is still tested byte-for-byte against SUN.CSV,
+so nothing that depended on exact reproduction of the old code broke.
+Run it with --dynamics robust (or SunSimulation(..., dynamics="robust")
+in code) to get the new behavior.
+
+Added a full test suite for the new path, including a test that
+specifically exercises that 24-day gap scenario. Re-rendered
+analysis_report.pdf/html with an updated Recommendations section
+marking these two items done.
+
+Didn't touch the other two items you might notice in there -- running
+against the full historical RGO dataset, and validating against the
+Bogdan et al. figures -- since I don't have either of those on hand.
+Send them over if you've got them and I'll fold them in.
+
+Tagged this as v2.0.0, pushed to main.
+
+David
