@@ -1,3 +1,5 @@
+![Sunspot Umbra / Pore Evolution Model](assets/banner.png)
+
 # Convert Rodney's FORTRAN code into python notebook
 
 Hi David,
